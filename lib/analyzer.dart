@@ -20,7 +20,8 @@ MarketRegime analyzeRegime(List<Candle> btcDaily) {
   final ret30 = pctChange(closes, 30);
 
   if (e20 == null || e50 == null) {
-    return MarketRegime(Regime.mixed, 'Not enough BTC history to judge the market.', price, ret30);
+    return MarketRegime(
+        Regime.mixed, 'Not enough BTC history to judge the market.', price, ret30, '30d');
   }
   int bull = 0;
   if (price > e50) bull++;
@@ -29,14 +30,14 @@ MarketRegime analyzeRegime(List<Candle> btcDaily) {
 
   if (bull == 3) {
     return MarketRegime(Regime.bullish,
-        'BTC is above its 50 & 200-day averages — market tailwind for altcoins.', price, ret30);
+        'BTC is above its 50 & 200-day averages — market tailwind for altcoins.', price, ret30, '30d');
   }
   if (bull == 0 || (price < e50 && e20 < e50)) {
     return MarketRegime(Regime.bearish,
-        'BTC is in a downtrend — most coins fall with it. Be selective and size small.', price, ret30);
+        'BTC is in a downtrend — most coins fall with it. Be selective and size small.', price, ret30, '30d');
   }
   return MarketRegime(Regime.mixed,
-      'BTC trend is mixed — favour only the strongest setups.', price, ret30);
+      'BTC trend is mixed — favour only the strongest setups.', price, ret30, '30d');
 }
 
 /// True for stablecoins and other pegged assets: price has stayed within ±3%
@@ -266,7 +267,7 @@ CoinAnalysis? analyzeCoin({
   var score = signals.fold<int>(0, (a, s) => a + s.points);
   void penalty(String cat, String text, int pts, [Impact impact = Impact.negative]) {
     score -= pts;
-    signals.add(Signal(cat, '$text: −$pts', impact, -pts, 0));
+    signals.add(Signal(cat, text, impact, -pts, 0));
   }
 
   // Chasing a spike: buying right after a huge daily candle usually means
@@ -322,22 +323,25 @@ CoinAnalysis? analyzeCoin({
     rating = Rating.neutral;
   }
 
+  String f0(double? v) => v == null ? '—' : v.toStringAsFixed(0);
   return CoinAnalysis(
+    mode: TradeMode.swing,
     symbol: symbol,
     base: base,
     ticker: ticker,
     score: score,
     rating: rating,
     signals: signals,
-    daily: daily,
-    h4: h4,
-    rsiDaily: rsiD,
-    adxDaily: adxR?.adx,
-    atrPercent: atrPct,
-    relStrength30d: rel,
-    volumeRatio: volRatio,
-    macdHist4h: hist,
-    return30d: ret30,
+    charts: {'1D': daily, '4H': h4},
+    stats: [
+      Stat('RSI (1D)', f0(rsiD)),
+      Stat('ADX (1D)', f0(adxR?.adx)),
+      Stat('ATR % (1D)', atrPct == null ? '—' : '${atrPct.toStringAsFixed(1)}%'),
+      Stat('30d return', '${ret30 >= 0 ? '+' : ''}${ret30.toStringAsFixed(1)}%'),
+      Stat('vs BTC 30d', rel == null ? '—' : '${rel >= 0 ? '+' : ''}${rel.toStringAsFixed(1)}%'),
+      Stat('Volume (4H)', volRatio == null ? '—' : '${volRatio.toStringAsFixed(1)}x'),
+      Stat('MACD (4H)', hist == null ? '—' : (hist >= 0 ? 'Positive' : 'Negative')),
+    ],
     entry: close,
     stop: stop,
     target: target,

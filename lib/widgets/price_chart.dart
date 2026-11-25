@@ -10,6 +10,8 @@ import '../models.dart';
 class PriceChart extends StatelessWidget {
   final List<Candle> candles;
   final int visible;
+  final int fast;
+  final int slow;
   final double? stop;
   final double? target;
 
@@ -17,6 +19,8 @@ class PriceChart extends StatelessWidget {
     super.key,
     required this.candles,
     this.visible = 90,
+    this.fast = 20,
+    this.slow = 50,
     this.stop,
     this.target,
   });
@@ -33,8 +37,8 @@ class PriceChart extends StatelessWidget {
           child: CustomPaint(
             painter: _ChartPainter(
               candles: candles,
-              ema20: ema(closes, 20),
-              ema50: ema(closes, 50),
+              ema20: ema(closes, fast),
+              ema50: ema(closes, slow),
               visible: visible,
               stop: stop,
               target: target,
@@ -42,9 +46,9 @@ class PriceChart extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        const Wrap(spacing: 14, children: [
-          _Legend(color: Color(0xFF42A5F5), label: 'EMA 20'),
-          _Legend(color: Color(0xFFFFA726), label: 'EMA 50'),
+        Wrap(spacing: 14, children: [
+          _Legend(color: const Color(0xFF42A5F5), label: 'EMA $fast'),
+          _Legend(color: const Color(0xFFFFA726), label: 'EMA $slow'),
           _Legend(color: upColor, label: 'Target'),
           _Legend(color: downColor, label: 'Stop'),
         ]),
@@ -187,5 +191,9 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ChartPainter old) =>
-      old.candles != candles || old.visible != visible || old.stop != stop || old.target != target;
+      old.candles != candles ||
+      old.ema20 != ema20 ||
+      old.visible != visible ||
+      old.stop != stop ||
+      old.target != target;
 }

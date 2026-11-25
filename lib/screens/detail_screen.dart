@@ -8,29 +8,26 @@ import 'home_screen.dart';
 
 class DetailScreen extends StatefulWidget {
   final CoinAnalysis coin;
-  final MarketRegime regime;
   final Watchlist watchlist;
-  const DetailScreen(
-      {super.key, required this.coin, required this.regime, required this.watchlist});
+  const DetailScreen({super.key, required this.coin, required this.watchlist});
 
   @override
   State<DetailScreen> createState() => _DetailScreenState();
 }
 
 class _DetailScreenState extends State<DetailScreen> {
-  bool _daily = true;
+  late String _chart = widget.coin.charts.keys.first;
 
   @override
   Widget build(BuildContext context) {
     final c = widget.coin;
     final t = c.ticker;
+    final scalp = c.mode == TradeMode.scalp;
     final starred = widget.watchlist.contains(c.symbol);
-    final riskPct = (c.entry - c.stop) / c.entry * 100;
-    final rewardPct = (c.target - c.entry) / c.entry * 100;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('${c.base} / USDT'),
+        title: Text('${c.base} / USDT · ${c.mode.title}'),
         actions: [
           IconButton(
             tooltip: starred ? 'Remove from watchlist' : 'Add to watchlist',
@@ -60,7 +57,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     const SizedBox(height: 4),
                     Text(
                       '24h range ${fmtPrice(t.low)} – ${fmtPrice(t.high)}\n'
-                      'Volume \$${fmtCompact(t.quoteVolume)} · 30d ${fmtPct(c.return30d, digits: 1)}',
+                      'Volume \$${fmtCompact(t.quoteVolume)} · horizon: ${c.mode.horizon}',
                       style: const TextStyle(color: Colors.white54, fontSize: 12),
                     ),
                   ]),
@@ -68,7 +65,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 Column(children: [
                   ScoreBadge(score: c.score, size: 72),
                   const SizedBox(height: 6),
-                  RatingChip(rating: c.rating),
+                  RatingChip(rating: c.rating, mode: c.mode),
                 ]),
               ]),
             ),
@@ -82,21 +79,20 @@ class _DetailScreenState extends State<DetailScreen> {
                 Row(children: [
                   const Text('Chart', style: TextStyle(fontWeight: FontWeight.bold)),
                   const Spacer(),
-                  ChoiceChip(
-                    label: const Text('1D'),
-                    selected: _daily,
-                    onSelected: (_) => setState(() => _daily = true),
-                  ),
-                  const SizedBox(width: 6),
-                  ChoiceChip(
-                    label: const Text('4H'),
-                    selected: !_daily,
-                    onSelected: (_) => setState(() => _daily = false),
-                  ),
+                  for (final k in c.charts.keys) ...[
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: Text(k),
+                      selected: _chart == k,
+                      onSelected: (_) => setState(() => _chart = k),
+                    ),
+                  ],
                 ]),
                 const SizedBox(height: 10),
                 PriceChart(
-                  candles: _daily ? c.daily : c.h4,
+                  candles: c.charts[_chart] ?? const [],
+                  fast: scalp ? 9 : 20,
+                  slow: scalp ? 21 : 50,
                   stop: c.stop,
                   target: c.target,
                 ),
@@ -109,21 +105,40 @@ class _DetailScreenState extends State<DetailScreen> {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Suggested trade plan', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(scalp ? 'Scalp plan (long)' : 'Suggested trade plan',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
-                _levelRow('Entry (current price)', c.entry, null, Colors.white),
-                _levelRow('Stop-loss', c.stop, -riskPct, downColor),
-                _levelRow('Target', c.target, rewardPct, upColor),
+                _levelRow(scalp ? 'Entry (best ask now)' : 'Entry (current price)', c.entry, null,
+                    Colors.white),
+                _levelRow('Stop-loss', c.stop, -c.riskPct, downColor),
+                _levelRow('Target', c.target, c.rewardPct, upColor),
                 const Divider(height: 20),
-                Text('Risk / reward: 1 : ${c.riskReward.toStringAsFixed(2)}',
-                    style: TextStyle(
-                        color: c.riskReward >= 1.5 ? upColor : const Color(0xFFFFB300),
-                        fontWeight: FontWeight.w600)),
+                if (scalp) ...[
+                  Text(
+                    'After fees (0.1% buy + 0.1% sell): '
+                    'win ${fmtPct(c.netRewardPct)} · loss ${fmtPct(-c.netRiskPct)}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                Text(
+                  scalp
+                      ? 'Net risk / reward: 1 : ${c.netRiskReward.toStringAsFixed(2)}'
+                      : 'Risk / reward: 1 : ${c.riskReward.toStringAsFixed(2)}',
+                  style: TextStyle(
+                      color: (scalp ? c.netRiskReward >= 1.2 : c.riskReward >= 1.5)
+                          ? upColor
+                          : const Color(0xFFFFB300),
+                      fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Stop is placed under the recent swing low (max 2.5× daily ATR). '
-                  'Target is the 60-day high, or 3× ATR if price is already near it.',
-                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                Text(
+                  scalp
+                      ? 'Stop = 1.2× the 5-minute ATR (min 0.25%), target = 2× the stop distance. '
+                          'Exit at target or stop — do not hold a failed scalp hoping it comes back.'
+                      : 'Stop is placed under the recent swing low (max 2.5× daily ATR). '
+                          'Target is the 60-day high, or 3× ATR if price is already near it.',
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
               ]),
             ),
@@ -136,17 +151,11 @@ class _DetailScreenState extends State<DetailScreen> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('Key indicators', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
-                Wrap(spacing: 10, runSpacing: 10, children: [
-                  _stat('RSI (1D)', c.rsiDaily?.toStringAsFixed(0)),
-                  _stat('ADX (1D)', c.adxDaily?.toStringAsFixed(0)),
-                  _stat('ATR % (1D)', c.atrPercent == null ? null : '${c.atrPercent!.toStringAsFixed(1)}%'),
-                  _stat('vs BTC 30d',
-                      c.relStrength30d == null ? '—' : fmtPct(c.relStrength30d!, digits: 1)),
-                  _stat('Volume (4H)',
-                      c.volumeRatio == null ? null : '${c.volumeRatio!.toStringAsFixed(1)}x'),
-                  _stat('MACD hist (4H)',
-                      c.macdHist4h == null ? null : (c.macdHist4h! >= 0 ? 'Positive' : 'Negative')),
-                ]),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: c.stats.map((s) => _stat(s.label, s.value)).toList(),
+                ),
               ]),
             ),
           ),
@@ -185,13 +194,13 @@ class _DetailScreenState extends State<DetailScreen> {
           if (pct != null)
             SizedBox(
               width: 70,
-              child: Text(fmtPct(pct, digits: 1),
+              child: Text(fmtPct(pct, digits: 2),
                   textAlign: TextAlign.right, style: TextStyle(color: color, fontSize: 12)),
             ),
         ]),
       );
 
-  Widget _stat(String label, String? value) => Container(
+  Widget _stat(String label, String value) => Container(
         width: 100,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
@@ -201,7 +210,7 @@ class _DetailScreenState extends State<DetailScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
           const SizedBox(height: 2),
-          Text(value ?? '—', style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
         ]),
       );
 

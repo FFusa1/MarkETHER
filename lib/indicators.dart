@@ -188,6 +188,25 @@ List<double> obv(List<Candle> c) {
   return out;
 }
 
+/// Rolling volume-weighted average price over the last [period] candles,
+/// using the typical price (high + low + close) / 3.
+List<double?> vwap(List<Candle> c, int period) {
+  final out = List<double?>.filled(c.length, null);
+  double pv = 0, vol = 0;
+  for (var i = 0; i < c.length; i++) {
+    final tp = (c[i].high + c[i].low + c[i].close) / 3;
+    pv += tp * c[i].volume;
+    vol += c[i].volume;
+    if (i >= period) {
+      final o = c[i - period];
+      pv -= (o.high + o.low + o.close) / 3 * o.volume;
+      vol -= o.volume;
+    }
+    if (i >= period - 1) out[i] = vol > 0 ? pv / vol : c[i].close;
+  }
+  return out;
+}
+
 /// Percent change of the last value versus `bars` bars earlier.
 double pctChange(List<double> v, int bars) {
   if (v.length <= bars) return v.isEmpty ? 0 : (v.last / v.first - 1) * 100;

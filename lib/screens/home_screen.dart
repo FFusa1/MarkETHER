@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../binance_api.dart';
@@ -17,14 +19,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const _scalpRefresh = Duration(seconds: 60);
+
   final _scanner = MarketScanner();
-  ScanResult? _result;
+  final Map<TradeMode, ScanResult> _results = {};
+  TradeMode _mode = TradeMode.swing;
   String? _error;
   bool _loading = false;
   int _done = 0;
   int _total = 0;
   int _topN = 50;
   _Filter _filter = _Filter.all;
+  Timer? _timer;
 
   @override
   void initState() {
@@ -35,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _timer?.cancel();
     widget.watchlist.removeListener(_onWatchlist);
     super.dispose();
   }
@@ -43,8 +50,30 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() {});
   }
 
+  void _setMode(TradeMode m) {
+    if (m == _mode) return;
+    setState(() {
+      _mode = m;
+      _error = null;
+    });
+    _timer?.cancel();
+    _timer = null;
+    if (m == TradeMode.scalp) {
+      // Scalp signals go stale within minutes: refresh automatically.
+      _timer = Timer.periodic(_scalpRefresh, (_) {
+        if (_mode == TradeMode.scalp && !_loading) _scan();
+      });
+    }
+    final existing = _results[m];
+    if (existing == null || DateTime.now().difference(existing.time) > _staleAfter(m)) _scan();
+  }
+
+  Duration _staleAfter(TradeMode m) =>
+      m == TradeMode.scalp ? _scalpRefresh : const Duration(minutes: 15);
+
   Future<void> _scan() async {
     if (_loading) return;
+    final mode = _mode;
     setState(() {
       _loading = true;
       _error = null;
@@ -53,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       final r = await _scanner.scan(
+        mode: mode,
         topN: _topN,
         onProgress: (d, t) {
           if (mounted) {
@@ -63,31 +93,31 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         },
       );
-      if (mounted) setState(() => _result = r);
+      if (mounted) setState(() => _results[mode] = r);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+    // If the user switched modes during the scan, load the new mode too.
+    if (mounted && _mode != mode && _results[_mode] == null) _scan();
   }
 
-  List<CoinAnalysis> get _visible {
-    final coins = _result?.coins ?? const <CoinAnalysis>[];
-    return switch (_filter) {
-      _Filter.all => coins,
-      _Filter.buys => coins
-          .where((c) => c.rating == Rating.strongBuy || c.rating == Rating.buy)
-          .toList(),
-      _Filter.watchlist => coins.where((c) => widget.watchlist.contains(c.symbol)).toList(),
-    };
-  }
+  List<CoinAnalysis> _visible(ScanResult r) => switch (_filter) {
+        _Filter.all => r.coins,
+        _Filter.buys => r.coins
+            .where((c) => c.rating == Rating.strongBuy || c.rating == Rating.buy)
+            .toList(),
+        _Filter.watchlist => r.coins.where((c) => widget.watchlist.contains(c.symbol)).toList(),
+      };
 
   @override
   Widget build(BuildContext context) {
-    final r = _result;
+    final r = _results[_mode];
+    final visible = r == null ? const <CoinAnalysis>[] : _visible(r);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Market AI', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('MarkETHER', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           PopupMenuButton<int>(
             tooltip: 'Coins to scan',
@@ -123,7 +153,30 @@ class _HomeScreenState extends State<HomeScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.only(bottom: 24),
           children: [
-            if (r != null) _RegimeCard(regime: r.regime, time: r.time, count: r.coins.length),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: SegmentedButton<TradeMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: TradeMode.swing,
+                    icon: Icon(Icons.calendar_month, size: 18),
+                    label: Text('Swing · days'),
+                  ),
+                  ButtonSegment(
+                    value: TradeMode.scalp,
+                    icon: Icon(Icons.bolt, size: 18),
+                    label: Text('Scalp · minutes'),
+                  ),
+                ],
+                selected: {_mode},
+                onSelectionChanged: (s) => _setMode(s.first),
+              ),
+            ),
+            if (r != null)
+              _RegimeCard(
+                result: r,
+                autoRefresh: _mode == TradeMode.scalp ? _scalpRefresh : null,
+              ),
             if (_loading && r == null)
               Padding(
                 padding: const EdgeInsets.all(40),
@@ -141,26 +194,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: Wrap(spacing: 8, children: [
                   _chip('All (${r.coins.length})', _Filter.all),
-                  _chip('Buy signals', _Filter.buys),
+                  _chip(_mode == TradeMode.scalp ? 'Long signals' : 'Buy signals', _Filter.buys),
                   _chip('Watchlist (${widget.watchlist.symbols.length})', _Filter.watchlist),
                 ]),
               ),
-              if (_visible.isEmpty)
+              if (visible.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(32),
                   child: Center(
-                      child: Text('Nothing here yet.', style: TextStyle(color: Colors.white54))),
+                      child: Text('Nothing here right now.', style: TextStyle(color: Colors.white54))),
                 ),
-              ..._visible.asMap().entries.map((e) => _CoinTile(
+              ...visible.asMap().entries.map((e) => _CoinTile(
                     rank: e.key + 1,
                     coin: e.value,
                     starred: widget.watchlist.contains(e.value.symbol),
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => DetailScreen(
-                          coin: e.value, regime: r.regime, watchlist: widget.watchlist),
+                      builder: (_) => DetailScreen(coin: e.value, watchlist: widget.watchlist),
                     )),
                   )),
-              const _Disclaimer(),
+              _Disclaimer(mode: _mode),
             ],
           ],
         ),
@@ -176,24 +228,25 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _RegimeCard extends StatelessWidget {
-  final MarketRegime regime;
-  final DateTime time;
-  final int count;
-  const _RegimeCard({required this.regime, required this.time, required this.count});
+  final ScanResult result;
+  final Duration? autoRefresh;
+  const _RegimeCard({required this.result, this.autoRefresh});
 
   @override
   Widget build(BuildContext context) {
+    final regime = result.regime;
     final (color, label) = switch (regime.regime) {
       Regime.bullish => (upColor, 'BULLISH'),
       Regime.mixed => (const Color(0xFFFFB300), 'MIXED'),
       Regime.bearish => (downColor, 'BEARISH'),
     };
+    final title = result.mode == TradeMode.scalp ? 'BTC short-term' : 'Market regime';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const Text('Market regime', style: TextStyle(color: Colors.white60)),
+            Text(title, style: const TextStyle(color: Colors.white60)),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -205,13 +258,18 @@ class _RegimeCard extends StatelessWidget {
                   style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
             ),
             const Spacer(),
-            Text(timeAgo(time), style: const TextStyle(color: Colors.white38, fontSize: 12)),
+            Text(
+              autoRefresh == null
+                  ? timeAgo(result.time)
+                  : '${timeAgo(result.time)} · auto ${autoRefresh!.inSeconds}s',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
           ]),
           const SizedBox(height: 8),
           Text(regime.summary),
           const SizedBox(height: 6),
           Text(
-            'BTC \$${fmtPrice(regime.btcPrice)} · 30d ${fmtPct(regime.btcReturn30d, digits: 1)} · $count coins analysed',
+            'BTC \$${fmtPrice(regime.btcPrice)} · ${regime.returnLabel} ${fmtPct(regime.btcReturn, digits: 1)} · ${result.coins.length} coins analysed',
             style: const TextStyle(color: Colors.white54, fontSize: 12),
           ),
         ]),
@@ -232,6 +290,7 @@ class _CoinTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = coin.ticker;
     final reasons = coin.positives.take(2).map((s) => s.text).join(' · ');
+    final scalp = coin.mode == TradeMode.scalp;
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -245,19 +304,24 @@ class _CoinTile extends StatelessWidget {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
                   Text('$rank. ', style: const TextStyle(color: Colors.white38)),
-                  Text(coin.base,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Flexible(
+                    child: Text(coin.base,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
                   if (starred)
                     const Padding(
                       padding: EdgeInsets.only(left: 4),
                       child: Icon(Icons.star, size: 14, color: Color(0xFFFFB300)),
                     ),
                   const SizedBox(width: 8),
-                  RatingChip(rating: coin.rating),
+                  RatingChip(rating: coin.rating, mode: coin.mode),
                 ]),
                 const SizedBox(height: 4),
                 Text(
-                  reasons.isEmpty ? 'No strong positive signals' : reasons,
+                  scalp
+                      ? 'Target ${fmtPct(coin.netRewardPct)} · Stop ${fmtPct(-coin.netRiskPct)} after fees'
+                      : (reasons.isEmpty ? 'No strong positive signals' : reasons),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
@@ -282,7 +346,7 @@ class _CoinTile extends StatelessWidget {
 class ScoreBadge extends StatelessWidget {
   final int score;
   final double size;
-  const ScoreBadge({required this.score, this.size = 48});
+  const ScoreBadge({super.key, required this.score, this.size = 48});
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +374,8 @@ class ScoreBadge extends StatelessWidget {
 
 class RatingChip extends StatelessWidget {
   final Rating rating;
-  const RatingChip({required this.rating});
+  final TradeMode mode;
+  const RatingChip({super.key, required this.rating, this.mode = TradeMode.swing});
 
   @override
   Widget build(BuildContext context) {
@@ -321,7 +386,7 @@ class RatingChip extends StatelessWidget {
         color: c.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(rating.label,
+      child: Text(rating.labelFor(mode),
           style: TextStyle(color: c, fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
@@ -348,16 +413,21 @@ class _ErrorCard extends StatelessWidget {
 }
 
 class _Disclaimer extends StatelessWidget {
-  const _Disclaimer();
+  final TradeMode mode;
+  const _Disclaimer({required this.mode});
 
   @override
-  Widget build(BuildContext context) => const Padding(
-        padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
         child: Text(
-          'Scores are generated automatically from technical indicators on Binance public data. '
-          'They are not financial advice and do not guarantee future prices. Crypto is highly '
-          'volatile — only risk money you can afford to lose and always use a stop-loss.',
-          style: TextStyle(color: Colors.white38, fontSize: 11),
+          mode == TradeMode.scalp
+              ? 'Scalp signals are a snapshot — prices move in seconds. Check the live Binance chart '
+                  'before entering, always set the stop-loss, and remember fees (~0.1% per side) are '
+                  'already included in the targets shown. Not financial advice.'
+              : 'Scores are generated automatically from technical indicators on Binance public data. '
+                  'They are not financial advice and do not guarantee future prices. Crypto is highly '
+                  'volatile — only risk money you can afford to lose and always use a stop-loss.',
+          style: const TextStyle(color: Colors.white38, fontSize: 11),
         ),
       );
 }

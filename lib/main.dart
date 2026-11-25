@@ -16,7 +16,7 @@ class MarketAiApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Market AI',
+      title: 'MarkETHER',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

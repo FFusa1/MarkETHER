@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 
 import 'analyzer.dart';
 import 'models.dart';
+import 'scalp_analyzer.dart';
 
 class BinanceApi {
   /// The second host is Binance's official public market-data mirror,
@@ -48,6 +49,11 @@ class BinanceApi {
     }) as List<dynamic>;
     return data.map((e) => Candle.fromJson(e as List<dynamic>)).toList();
   }
+
+  Future<OrderBook> depth(String symbol, {int limit = 50}) async {
+    final data = await _get('/api/v3/depth', {'symbol': symbol, 'limit': '$limit'});
+    return OrderBook.fromJson(data as Map<String, dynamic>);
+  }
 }
 
 /// Stablecoins, fiat, wrapped and pegged assets — not worth "analysing".
@@ -57,15 +63,16 @@ const _excludedBases = {
   'XAUT', 'WBTC', 'WBETH', 'BETH', 'BNSOL', 'UST', 'USTC', 'SUSD', 'U', 'USDD',
   'FRAX', 'LUSD', 'GUSD', 'USDT',
 };
-// Any other stablecoin is caught by isPegged() in the analyzer.
+// Any other stablecoin is caught by Ticker.looksPegged / isPegged().
 
 class MarketScanner {
   final BinanceApi api;
   MarketScanner([BinanceApi? api]) : api = api ?? BinanceApi();
 
-  /// Picks the [topN] most-traded USDT pairs, downloads their 1d and 4h
-  /// candles and scores each one.
+  /// Picks the [topN] most-traded USDT pairs, downloads their candles
+  /// (1d + 4h for swing, 5m + 15m + order book for scalp) and scores each.
   Future<ScanResult> scan({
+    TradeMode mode = TradeMode.swing,
     int topN = 50,
     double minQuoteVolume = 5e6,
     void Function(int done, int total)? onProgress,
@@ -76,6 +83,7 @@ class MarketScanner {
       final base = t.symbol.substring(0, t.symbol.length - 4);
       if (base.isEmpty || _excludedBases.contains(base)) return false;
       if (base.endsWith('DOWN') || base.endsWith('BULL') || base.endsWith('BEAR')) return false;
+      if (t.looksPegged) return false;
       return t.quoteVolume >= minQuoteVolume && t.trades > 0 && t.lastPrice > 0;
     }).toList()
       ..sort((a, b) => b.quoteVolume.compareTo(a.quoteVolume));
@@ -86,10 +94,40 @@ class MarketScanner {
       if (btc.isNotEmpty) selected.insert(0, btc.first);
     }
 
-    final btcDaily = await api.klines('BTCUSDT', '1d', limit: 250);
-    final regime = analyzeRegime(btcDaily);
+    // Market regime from BTC, on the timeframe that matters for this mode.
+    final List<Candle> btcCandles;
+    final MarketRegime regime;
+    if (mode == TradeMode.swing) {
+      btcCandles = await api.klines('BTCUSDT', '1d', limit: 250);
+      regime = analyzeRegime(btcCandles);
+    } else {
+      btcCandles = await api.klines('BTCUSDT', '15m', limit: 100);
+      regime = analyzeScalpRegime(btcCandles);
+    }
 
-    final results = <CoinAnalysis>[];
+    Future<CoinAnalysis?> analyzeOne(Ticker t) async {
+      if (mode == TradeMode.swing) {
+        final daily = t.symbol == 'BTCUSDT'
+            ? btcCandles
+            : await api.klines(t.symbol, '1d', limit: 250);
+        final h4 = await api.klines(t.symbol, '4h', limit: 200);
+        return analyzeCoin(ticker: t, daily: daily, h4: h4, btcDaily: btcCandles, regime: regime);
+      }
+      final results = await Future.wait([
+        api.klines(t.symbol, '5m', limit: 200),
+        t.symbol == 'BTCUSDT' ? Future.value(btcCandles) : api.klines(t.symbol, '15m', limit: 100),
+        api.depth(t.symbol),
+      ]);
+      return analyzeScalp(
+        ticker: t,
+        m5: results[0] as List<Candle>,
+        m15: results[1] as List<Candle>,
+        book: results[2] as OrderBook,
+        regime: regime,
+      );
+    }
+
+    final coins = <CoinAnalysis>[];
     var done = 0;
     var failed = 0;
     final total = selected.length;
@@ -101,13 +139,8 @@ class MarketScanner {
       while (next < selected.length) {
         final t = selected[next++];
         try {
-          final daily = t.symbol == 'BTCUSDT'
-              ? btcDaily
-              : await api.klines(t.symbol, '1d', limit: 250);
-          final h4 = await api.klines(t.symbol, '4h', limit: 200);
-          final a = analyzeCoin(
-              ticker: t, daily: daily, h4: h4, btcDaily: btcDaily, regime: regime);
-          if (a != null) results.add(a);
+          final a = await analyzeOne(t);
+          if (a != null) coins.add(a);
         } catch (_) {
           failed++;
         }
@@ -117,7 +150,7 @@ class MarketScanner {
     }
 
     await Future.wait(List.generate(6, (_) => worker()));
-    results.sort((a, b) => b.score.compareTo(a.score));
-    return ScanResult(results, regime, DateTime.now(), failed);
+    coins.sort((a, b) => b.score.compareTo(a.score));
+    return ScanResult(mode, coins, regime, DateTime.now(), failed);
   }
 }

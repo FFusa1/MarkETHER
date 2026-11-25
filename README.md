@@ -1,8 +1,30 @@
-# Market AI — Binance crypto scanner (Android)
+# MarkETHER — Binance crypto scanner (Android + web)
 
 Scans the most-traded Binance USDT spot pairs, runs a professional-style
-technical analysis on each coin and ranks them with a 0–100 score:
-**STRONG BUY · BUY · NEUTRAL · AVOID**.
+technical analysis on each coin and ranks them with a 0–100 score.
+Two modes, switched at the top of the app:
+
+* **Swing (days – weeks)** — daily + 4h candles. Ratings: STRONG BUY · BUY · NEUTRAL · AVOID.
+* **Scalp (minutes)** — 5m + 15m candles + live order book, auto-refresh every 60 s.
+  Ratings: LONG NOW · LONG · WAIT · AVOID. Targets and stops are shown after
+  Binance fees (0.1% buy + 0.1% sell).
+
+## Scalp score (max 100)
+
+| Category | Pts | What it checks |
+|---|---|---|
+| 15m trend | 20 | Price vs 15m EMA21, EMA9/EMA21 cross |
+| 5m trend | 20 | Price vs 8h VWAP, 5m EMA9/21, holding EMA9 |
+| Momentum | 20 | 5m RSI(7) zone, 5m MACD histogram & acceleration |
+| Volume | 15 | Last 15 min volume vs previous 100 min |
+| Order book | 15 | Share of buy-side value within 0.5% of price |
+| Cost | 10 | Bid/ask spread |
+| Penalties | | Too quiet / too wild (5m ATR), +4–8% in last hour, target < 0.3% after fees, spread > 0.15%, BTC falling on 15m |
+
+Levels: entry = best ask, stop = 1.2× 5m ATR (min 0.25%), target = 2× stop distance.
+Logic: `lib/scalp_analyzer.dart`.
+
+## Swing score
 
 * Read-only Binance public market data — no account, no API key, no trading.
 * Swing-trading horizon: daily + 4-hour candles.
@@ -11,7 +33,7 @@ technical analysis on each coin and ranks them with a 0–100 score:
 * Market-regime filter: when BTC is in a downtrend, all altcoin scores are penalised.
 * Watchlist saved on the phone.
 
-## How the score works (max 100)
+Max 100:
 
 | Category | Pts | What it checks |
 |---|---|---|
