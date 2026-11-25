@@ -16,8 +16,41 @@ if "android.permission.INTERNET" not in xml:
         1,
     )
 xml = re.sub(r'android:label="[^"]*"', f'android:label="{APP_NAME}"', xml, count=1)
+
+# Background bot: foreground service (flutter_foreground_task) that keeps the
+# app alive while the bot runs. stopWithTask = swiping the app away stops it.
+# "specialUse" type has no daily time cap (dataSync is limited to 6 h/day).
+PERMISSIONS = [
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.WAKE_LOCK",
+]
+for perm in PERMISSIONS:
+    if perm not in xml:
+        xml = xml.replace(
+            "<application",
+            f'<uses-permission android:name="{perm}"/>\n    <application',
+            1,
+        )
+
+SERVICE = """
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="true"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs a user-started market-analysis session while the app is in the background" />
+        </service>
+    </application>"""
+if "flutter_foreground_task.service.ForegroundService" not in xml:
+    xml = xml.replace("</application>", SERVICE.lstrip("\n"), 1)
+
 manifest.write_text(xml, encoding="utf-8")
 print("Android manifest patched")
+print(xml)
 
 # --- Web (browser tab title, home-screen icon name) ---
 index = pathlib.Path("web/index.html")

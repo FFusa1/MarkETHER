@@ -50,6 +50,31 @@ class BinanceApi {
     return data.map((e) => Candle.fromJson(e as List<dynamic>)).toList();
   }
 
+  /// Candles between [start] and [end] (max 1000), used to replay what
+  /// happened to open paper trades while the app was closed.
+  Future<List<Candle>> klinesRange(
+      String symbol, String interval, DateTime start, DateTime end) async {
+    final data = await _get('/api/v3/klines', {
+      'symbol': symbol,
+      'interval': interval,
+      'startTime': '${start.millisecondsSinceEpoch}',
+      'endTime': '${end.millisecondsSinceEpoch}',
+      'limit': '1000',
+    }) as List<dynamic>;
+    return data.map((e) => Candle.fromJson(e as List<dynamic>)).toList();
+  }
+
+  /// Current best bid (the price you could sell at right now) per symbol.
+  Future<Map<String, double>> bids(List<String> symbols) async {
+    if (symbols.isEmpty) return {};
+    final data = await _get('/api/v3/ticker/bookTicker', {'symbols': jsonEncode(symbols)})
+        as List<dynamic>;
+    return {
+      for (final e in data.cast<Map<String, dynamic>>())
+        e['symbol'] as String: double.parse(e['bidPrice'] as String),
+    };
+  }
+
   Future<OrderBook> depth(String symbol, {int limit = 50}) async {
     final data = await _get('/api/v3/depth', {'symbol': symbol, 'limit': '$limit'});
     return OrderBook.fromJson(data as Map<String, dynamic>);
