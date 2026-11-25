@@ -313,14 +313,22 @@ CoinAnalysis? analyzeCoin({
           : score >= 42
               ? Rating.neutral
               : Rating.avoid;
-  // Hard caps: a Strong Buy must not be overbought, chased, or a poor trade.
-  if (rating == Rating.strongBuy &&
-      ((rsiD != null && rsiD > 80) || change24h >= 15 || rr < 1.5 || stopPct > 15)) {
-    rating = Rating.buy;
-  }
+  // Hard caps lower the score too, so the number, colour and label agree.
   // A trade where the reward is smaller than the risk is never a buy.
   if ((rating == Rating.buy || rating == Rating.strongBuy) && rr < 1) {
+    final capped = math.min(score, 57);
+    signals.add(Signal('Trade risk', 'Reward smaller than risk — capped at NEUTRAL',
+        Impact.negative, capped - score, 0));
+    score = capped;
     rating = Rating.neutral;
+  } else if (rating == Rating.strongBuy &&
+      ((rsiD != null && rsiD > 80) || change24h >= 15 || rr < 1.5 || stopPct > 15)) {
+    // A Strong Buy must not be overbought, chased, or a poor trade.
+    final capped = math.min(score, 71);
+    signals.add(Signal('Trade risk', 'Strong Buy conditions not all met — capped at BUY',
+        Impact.neutral, capped - score, 0));
+    score = capped;
+    rating = Rating.buy;
   }
 
   String f0(double? v) => v == null ? '—' : v.toStringAsFixed(0);

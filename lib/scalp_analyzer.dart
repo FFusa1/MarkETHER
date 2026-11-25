@@ -232,11 +232,22 @@ CoinAnalysis? analyzeScalp({
               ? Rating.neutral
               : Rating.avoid;
   final netRR = netTarget / (stopDist / entry * 100 + scalpFeePct);
-  if (rating == Rating.strongBuy && ((r7 != null && r7 > 80) || chg1h >= 8 || spread > 0.1)) {
-    rating = Rating.buy;
-  }
-  if ((rating == Rating.buy || rating == Rating.strongBuy) && netRR < 1) {
+  // Caps lower the score too, so the number, colour and label always agree.
+  if (netRR < 1 && score >= 42) {
+    final capped = math.min(score, 55);
+    signals.add(Signal(
+        'Fees',
+        'After fees the loss at stop is bigger than the win at target '
+            '(net 1:${netRR.toStringAsFixed(2)}) — capped at WAIT',
+        Impact.negative,
+        capped - score,
+        0));
+    score = capped;
     rating = Rating.neutral;
+  } else if (rating == Rating.strongBuy &&
+      ((r7 != null && r7 > 80) || chg1h >= 8 || spread > 0.1)) {
+    score = math.min(score, 69);
+    rating = Rating.buy;
   }
 
   return CoinAnalysis(

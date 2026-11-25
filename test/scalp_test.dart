@@ -114,6 +114,26 @@ void main() {
       expect(wide.signals.any((s) => s.text.contains('eats the edge')), isTrue);
     });
 
+    test('score always agrees with the label', () {
+      for (final drift in [-0.002, -0.0005, 0.0, 0.0005, 0.0015, 0.003]) {
+        for (final w in [0.3, 1.0, 3.0]) {
+          final c5 = bars(200, drift, volBoost: 2);
+          final c15 = bars(100, drift * 2, minutes: 15);
+          final a = analyzeScalp(
+              ticker: tick('AUSDT', c5.last.close),
+              m5: c5, m15: c15, book: book(c5.last.close, bidWeight: w), regime: regime)!;
+          final expected = a.score >= 70
+              ? [Rating.strongBuy]
+              : a.score >= 56
+                  ? [Rating.buy]
+                  : a.score >= 42
+                      ? [Rating.neutral]
+                      : [Rating.avoid];
+          expect(expected, contains(a.rating), reason: 'drift $drift bids $w score ${a.score}');
+        }
+      }
+    });
+
     test('too little data returns null', () {
       final short = bars(20, 0.001);
       expect(
