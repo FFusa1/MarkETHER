@@ -54,8 +54,10 @@ class BinanceApi {
 const _excludedBases = {
   'USDC', 'FDUSD', 'TUSD', 'BUSD', 'DAI', 'USDP', 'USDE', 'PYUSD', 'USD1', 'XUSD',
   'BFUSD', 'RLUSD', 'USDS', 'EUR', 'EURI', 'AEUR', 'GBP', 'TRY', 'BRL', 'PAXG',
-  'XAUT', 'WBTC', 'WBETH', 'BETH', 'BNSOL', 'UST', 'USTC', 'SUSD',
+  'XAUT', 'WBTC', 'WBETH', 'BETH', 'BNSOL', 'UST', 'USTC', 'SUSD', 'U', 'USDD',
+  'FRAX', 'LUSD', 'GUSD', 'USDT',
 };
+// Any other stablecoin is caught by isPegged() in the analyzer.
 
 class MarketScanner {
   final BinanceApi api;

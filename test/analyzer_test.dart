@@ -96,6 +96,49 @@ void main() {
       expect(up.target, greaterThan(up.entry));
     });
 
+    test('stablecoins pinned near \$1 are skipped', () {
+      final peg = List.generate(250, (i) {
+        final p = 1 + 0.002 * math.sin(i.toDouble());
+        return Candle(
+          openTime: DateTime(2025, 1, 1).add(Duration(days: i)),
+          open: p,
+          high: p * 1.001,
+          low: p * 0.999,
+          close: p,
+          volume: 1e6,
+          quoteVolume: 1e6,
+        );
+      });
+      expect(isPegged(peg), isTrue);
+      expect(
+          analyzeCoin(
+              ticker: ticker('USTABLEUSDT', peg.last.close),
+              daily: peg, h4: peg, btcDaily: btc, regime: regime),
+          isNull);
+      expect(isPegged(series(250, 0.01)), isFalse);
+    });
+
+    test('a 24h spike is penalised and never rated Strong Buy', () {
+      final d = series(250, 0.01);
+      final h = series(200, 0.002, hours: 4);
+      final calm = analyzeCoin(
+          ticker: ticker('AUSDT', d.last.close),
+          daily: d, h4: h, btcDaily: btc, regime: regime)!;
+      final spiked = analyzeCoin(
+          ticker: Ticker(
+              symbol: 'AUSDT',
+              lastPrice: d.last.close,
+              changePercent: 30,
+              quoteVolume: 1e8,
+              high: d.last.close,
+              low: d.last.close,
+              trades: 1000),
+          daily: d, h4: h, btcDaily: btc, regime: regime)!;
+      expect(spiked.score, lessThan(calm.score));
+      expect(spiked.rating, isNot(Rating.strongBuy));
+      expect(spiked.signals.any((s) => s.category == 'Chase risk'), isTrue);
+    });
+
     test('too little history returns null', () {
       final short = series(30, 0.01);
       expect(

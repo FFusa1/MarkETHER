@@ -39,6 +39,17 @@ MarketRegime analyzeRegime(List<Candle> btcDaily) {
       'BTC trend is mixed — favour only the strongest setups.', price, ret30);
 }
 
+/// True for stablecoins and other pegged assets: price has stayed within ±3%
+/// of $1 and moved less than 2% top-to-bottom over the last 30 days.
+bool isPegged(List<Candle> daily) {
+  if (daily.isEmpty) return false;
+  final recent = daily.sublist(math.max(0, daily.length - 30));
+  final hi = recent.map((c) => c.high).reduce(math.max);
+  final lo = recent.map((c) => c.low).reduce(math.min);
+  final last = recent.last.close;
+  return last > 0.97 && last < 1.03 && lo > 0 && hi / lo < 1.02;
+}
+
 CoinAnalysis? analyzeCoin({
   required Ticker ticker,
   required List<Candle> daily,
@@ -60,6 +71,8 @@ CoinAnalysis? analyzeCoin({
   final dc = daily.map((c) => c.close).toList();
   final hc = h4.map((c) => c.close).toList();
   final close = dc.last;
+
+  if (isPegged(daily)) return null;
 
   // ---------------- Trend (30) ----------------
   final e20d = lastOf(ema(dc, 20))!;
@@ -237,15 +250,57 @@ CoinAnalysis? analyzeCoin({
     }
   }
 
-  // ---------------- Market regime ----------------
+  // ---------------- Trade levels ----------------
+  final a = atrD ?? close * 0.04;
+  final swingLow = daily.sublist(daily.length - 10).map((c) => c.low).reduce(math.min);
+  // Stop: below recent swing low, but no wider than 2.5 ATR and no tighter than 1 ATR.
+  var stop = math.max(swingLow * 0.99, close - 2.5 * a);
+  if (close - stop < a) stop = close - a;
+  stop = math.max(stop, 0.0);
+  final high60 = daily.sublist(math.max(0, daily.length - 60)).map((c) => c.high).reduce(math.max);
+  final target = high60 > close + 1.5 * a ? high60 : close + 3 * a;
+  final stopPct = (close - stop) / close * 100;
+  final rr = close - stop > 0 ? (target - close) / (close - stop) : 0.0;
+
+  // ---------------- Penalties ----------------
   var score = signals.fold<int>(0, (a, s) => a + s.points);
+  void penalty(String cat, String text, int pts, [Impact impact = Impact.negative]) {
+    score -= pts;
+    signals.add(Signal(cat, '$text: −$pts', impact, -pts, 0));
+  }
+
+  // Chasing a spike: buying right after a huge daily candle usually means
+  // buying the top of the move.
+  final change24h = ticker.changePercent;
+  final chg = '+${change24h.toStringAsFixed(1)}% in 24h';
+  if (change24h >= 25) {
+    penalty('Chase risk', 'Parabolic spike ($chg) — wait for a pullback', 14);
+  } else if (change24h >= 15) {
+    penalty('Chase risk', 'Big spike ($chg) — high pullback risk', 8);
+  } else if (change24h >= 10) {
+    penalty('Chase risk', 'Sharp move ($chg)', 3, Impact.neutral);
+  }
+
+  final sp = '${stopPct.toStringAsFixed(1)}% away';
+  if (stopPct > 15) {
+    penalty('Trade risk', 'Stop-loss $sp — too wide for a safe position', 8);
+  } else if (stopPct > 10) {
+    penalty('Trade risk', 'Stop-loss $sp — use a small position', 3, Impact.neutral);
+  }
+
+  final rrText = 'Risk/reward 1:${rr.toStringAsFixed(2)}';
+  if (rr < 1) {
+    penalty('Trade risk', '$rrText — reward smaller than risk', 10);
+  } else if (rr < 1.5) {
+    penalty('Trade risk', '$rrText — below the 1:1.5 minimum', 5);
+  }
+
+  // ---------------- Market regime ----------------
   if (base != 'BTC') {
     if (regime.regime == Regime.bearish) {
-      score -= 10;
-      signals.add(const Signal('Market', 'BTC downtrend: −10 market-risk penalty', Impact.negative, -10, 0));
+      penalty('Market', 'BTC downtrend — market-risk penalty', 10);
     } else if (regime.regime == Regime.mixed) {
-      score -= 4;
-      signals.add(const Signal('Market', 'Mixed BTC trend: −4 market-risk penalty', Impact.neutral, -4, 0));
+      penalty('Market', 'Mixed BTC trend — market-risk penalty', 4, Impact.neutral);
     }
   }
   score = math.min(100, math.max(0, score));
@@ -257,17 +312,15 @@ CoinAnalysis? analyzeCoin({
           : score >= 42
               ? Rating.neutral
               : Rating.avoid;
-  // Never call an extremely overbought coin a strong buy.
-  if (rating == Rating.strongBuy && rsiD != null && rsiD > 80) rating = Rating.buy;
-
-  // ---------------- Trade levels ----------------
-  final a = atrD ?? close * 0.04;
-  final swingLow = daily.sublist(daily.length - 10).map((c) => c.low).reduce(math.min);
-  // Stop: below recent swing low, but no wider than 2.5 ATR and no tighter than 1 ATR.
-  var stop = math.max(swingLow * 0.99, close - 2.5 * a);
-  if (close - stop < a) stop = close - a;
-  final high60 = daily.sublist(math.max(0, daily.length - 60)).map((c) => c.high).reduce(math.max);
-  final target = high60 > close + 1.5 * a ? high60 : close + 3 * a;
+  // Hard caps: a Strong Buy must not be overbought, chased, or a poor trade.
+  if (rating == Rating.strongBuy &&
+      ((rsiD != null && rsiD > 80) || change24h >= 15 || rr < 1.5 || stopPct > 15)) {
+    rating = Rating.buy;
+  }
+  // A trade where the reward is smaller than the risk is never a buy.
+  if ((rating == Rating.buy || rating == Rating.strongBuy) && rr < 1) {
+    rating = Rating.neutral;
+  }
 
   return CoinAnalysis(
     symbol: symbol,
@@ -286,7 +339,7 @@ CoinAnalysis? analyzeCoin({
     macdHist4h: hist,
     return30d: ret30,
     entry: close,
-    stop: math.max(stop, 0),
+    stop: stop,
     target: target,
   );
 }

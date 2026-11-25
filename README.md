@@ -21,9 +21,14 @@ technical analysis on each coin and ranks them with a 0–100 score:
 | Volume | 15 | 4h volume surge vs 20-bar average, 20-day OBV trend |
 | Structure | 12 | ADX trend strength & direction, distance from 20-day high |
 | Risk | 8 | Daily ATR % (volatility) |
+| Chase risk | −14…0 | 24h spike penalty (≥10% −3, ≥15% −8, ≥25% −14) |
+| Trade risk | −18…0 | Stop-loss >10% away (−3) / >15% (−8); risk/reward <1.5 (−5) / <1 (−10) |
 | Market | −10…0 | BTC regime penalty (bearish −10, mixed −4) |
 
 Thresholds: ≥72 Strong Buy, ≥58 Buy, ≥42 Neutral, otherwise Avoid.
+A Strong Buy is capped to Buy if RSI > 80, the coin rose ≥15% in 24h,
+risk/reward < 1.5 or the stop is >15% away. Risk/reward < 1 is never a Buy.
+Stablecoins and pegged assets (price held within 2% near $1 for 30 days) are skipped.
 Logic lives in `lib/analyzer.dart` and `lib/indicators.dart`.
 
 ## Building the APK (no tools needed on your PC)
