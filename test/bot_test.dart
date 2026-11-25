@@ -28,7 +28,9 @@ Candle m1(int minute, {required double high, required double low, double? open})
       quoteVolume: 100,
     );
 
-Trade trade(double exit, {Map<String, int> f = const {'Momentum': 100}, int minute = 0}) => Trade(
+Trade trade(double exit,
+        {Map<String, int> f = const {'Momentum': 100}, int minute = 0, int score = 70}) =>
+    Trade(
       symbol: 'AUSDT',
       base: 'A',
       entryTime: t0.add(Duration(minutes: minute)),
@@ -37,7 +39,7 @@ Trade trade(double exit, {Map<String, int> f = const {'Momentum': 100}, int minu
       exitPrice: exit,
       qty: 0.1,
       reason: 'test',
-      score: 70,
+      score: score,
       features: f,
     );
 
@@ -123,6 +125,37 @@ void main() {
       expect(momentum.edge, greaterThan(2));
       expect(volume.edge.abs(), lessThan(0.01));
       expect(ins.first.category, 'Momentum');
+    });
+  });
+
+  group('entry level', () {
+    test('LONG NOW always enters; LONG only when "LONG and above" is set', () {
+      expect(shouldEnter(Rating.strongBuy, false), isTrue);
+      expect(shouldEnter(Rating.strongBuy, true), isTrue);
+      expect(shouldEnter(Rating.buy, false), isFalse);
+      expect(shouldEnter(Rating.buy, true), isTrue);
+      expect(shouldEnter(Rating.neutral, true), isFalse);
+      expect(shouldEnter(Rating.avoid, true), isFalse);
+    });
+
+    test('results split into LONG NOW (70+) and LONG (below 70)', () {
+      final tiers = statsByTier([
+        trade(102, score: 75),
+        trade(99, score: 70),
+        trade(101, score: 69),
+        trade(98, score: 60),
+        trade(97, score: 58),
+      ]);
+      expect(tiers.longNow.trades, 2);
+      expect(tiers.longNow.wins, 1);
+      expect(tiers.long.trades, 3);
+      expect(tiers.long.wins, 1);
+      expect(tiers.long.netUsd, lessThan(0));
+    });
+
+    test('"Enter on" setting survives save/load and defaults to LONG and above', () {
+      expect(BotSettings.fromJson(const {}).enterOnLong, isTrue);
+      expect(BotSettings.fromJson(BotSettings(enterOnLong: false).toJson()).enterOnLong, isFalse);
     });
   });
 

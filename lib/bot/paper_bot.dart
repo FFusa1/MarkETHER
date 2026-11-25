@@ -27,7 +27,11 @@ class BotSettings {
   int topN;
   bool autoStart;
 
+  /// true = also enter on LONG (score 56–69), not only LONG NOW (70+).
+  bool enterOnLong;
+
   BotSettings({
+    this.enterOnLong = true,
     this.tradeSize = 10,
     this.maxOpen = 3,
     this.dailyLossLimit = 5,
@@ -45,6 +49,7 @@ class BotSettings {
         'cooldownMin': cooldownMin,
         'topN': topN,
         'autoStart': autoStart,
+        'enterOnLong': enterOnLong,
       };
 
   factory BotSettings.fromJson(Map<String, dynamic> j) => BotSettings(
@@ -55,6 +60,7 @@ class BotSettings {
         cooldownMin: (j['cooldownMin'] as num?)?.toInt() ?? 15,
         topN: (j['topN'] as num?)?.toInt() ?? 50,
         autoStart: j['autoStart'] as bool? ?? false,
+        enterOnLong: j['enterOnLong'] as bool? ?? true,
       );
 }
 
@@ -202,6 +208,20 @@ Map<String, int> featuresOf(CoinAnalysis c) {
     'Penalties': penalties,
   };
 }
+
+/// Which scalp ratings the bot buys.
+bool shouldEnter(Rating r, bool enterOnLong) =>
+    r == Rating.strongBuy || (enterOnLong && r == Rating.buy);
+
+/// Score of 70+ is LONG NOW; 56–69 is LONG (scores and labels always agree).
+const longNowMinScore = 70;
+bool isLongNowTrade(Trade t) => t.score >= longNowMinScore;
+
+/// Results split by entry signal, to decide which level to use live.
+({BotStats longNow, BotStats long}) statsByTier(List<Trade> trades) => (
+      longNow: BotStats.of(trades.where(isLongNowTrade).toList()),
+      long: BotStats.of(trades.where((t) => !isLongNowTrade(t)).toList()),
+    );
 
 /// Exit decision for a live price check, or null to keep holding.
 /// Stops fill at the current bid (market sell); targets fill at the target
@@ -566,7 +586,7 @@ class PaperBot extends ChangeNotifier {
     for (final c in r.coins) {
       if (open.length >= settings.maxOpen) break;
       if (state != BotState.running) break;
-      if (c.rating != Rating.strongBuy) continue;
+      if (!shouldEnter(c.rating, settings.enterOnLong)) continue;
       if (open.any((p) => p.symbol == c.symbol)) continue;
       final cd = _cooldown[c.symbol];
       if (cd != null && now.isBefore(cd)) continue;
@@ -584,7 +604,8 @@ class PaperBot extends ChangeNotifier {
         lastChecked: now,
         lastBid: c.entry,
       ));
-      lastEvent = 'Bought ${c.base} at ${c.entry} (score ${c.score})';
+      lastEvent = 'Bought ${c.base} at ${c.entry} '
+          '(${c.rating == Rating.strongBuy ? 'LONG NOW' : 'LONG'}, score ${c.score})';
     }
   }
 

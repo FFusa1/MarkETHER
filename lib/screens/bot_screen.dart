@@ -20,6 +20,7 @@ class BotScreen extends StatelessWidget {
             _SummaryRow(bot: bot),
             _OpenPositions(bot: bot),
             _StatsCard(bot: bot),
+            _TierCard(bot: bot),
             _LearningCard(bot: bot),
             _SettingsCard(bot: bot),
             _Journal(bot: bot),
@@ -145,7 +146,8 @@ class _StatusCard extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             bot.running
-                ? 'Scans the top ${bot.settings.topN} coins every minute and buys LONG NOW signals. '
+                ? 'Scans the top ${bot.settings.topN} coins every minute and buys '
+                    '${bot.settings.enterOnLong ? 'LONG and LONG NOW' : 'only LONG NOW'} signals. '
                     'Checks open trades every 15 seconds. On Android it keeps running in the '
                     'background (you will see a notification) until you press Stop or swipe the app '
                     'away. In a browser it runs while this tab is open.'
@@ -217,8 +219,10 @@ class _OpenPositions extends StatelessWidget {
           : TextButton(onPressed: bot.closeAll, child: const Text('Close all')),
       children: [
         if (bot.open.isEmpty)
-          const Text('No open trades. The bot buys when a coin reaches LONG NOW.',
-              style: TextStyle(color: Colors.white54)),
+          Text(
+              'No open trades. The bot buys when a coin reaches '
+              '${bot.settings.enterOnLong ? 'LONG or LONG NOW' : 'LONG NOW'}.',
+              style: const TextStyle(color: Colors.white54)),
         for (final p in bot.open)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
@@ -280,6 +284,68 @@ class _StatsCard extends StatelessWidget {
           style: const TextStyle(color: Colors.white54, fontSize: 12)),
       const SizedBox(height: 4),
       LinearProgressIndicator(value: goal, minHeight: 6, borderRadius: BorderRadius.circular(3)),
+    ]);
+  }
+}
+
+class _TierCard extends StatelessWidget {
+  final PaperBot bot;
+  const _TierCard({required this.bot});
+
+  @override
+  Widget build(BuildContext context) {
+    final tiers = statsByTier(bot.trades);
+    Widget cell(String text, {Color? color, bool bold = false, TextAlign align = TextAlign.end}) =>
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(text,
+              textAlign: align,
+              style: TextStyle(
+                  color: color ?? (bold ? null : Colors.white70),
+                  fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 13)),
+        );
+    String pct(double v, bool hasAny) => hasAny ? fmtPct(v) : '—';
+    TableRow row(String label, String Function(BotStats) f, [Color? Function(BotStats)? c]) =>
+        TableRow(children: [
+          cell(label, align: TextAlign.start),
+          cell(f(tiers.longNow), color: c?.call(tiers.longNow)),
+          cell(f(tiers.long), color: c?.call(tiers.long)),
+        ]);
+    String verdict() {
+      const need = 50;
+      final a = tiers.longNow, b = tiers.long;
+      if (a.trades < need || b.trades < need) {
+        return 'Needs at least $need trades in each column to compare fairly '
+            '(now ${a.trades} LONG NOW · ${b.trades} LONG). '
+            'Use live only the level that ends with profit after fees.';
+      }
+      final aOk = a.netUsd > 0, bOk = b.netUsd > 0;
+      if (aOk && bOk) return 'Both levels are profitable on paper: "LONG and above" is OK for live.';
+      if (aOk) return 'Only LONG NOW is profitable: set "Enter on" to LONG NOW only before going live.';
+      if (bOk) return 'Only LONG is profitable so far, which is unusual: keep collecting paper data.';
+      return 'Neither level is profitable yet: do not go live, keep paper trading.';
+    }
+
+    return _Section(title: 'LONG NOW vs LONG', children: [
+      Table(
+        columnWidths: const {0: FlexColumnWidth(1.4), 1: FlexColumnWidth(), 2: FlexColumnWidth()},
+        children: [
+          TableRow(children: [
+            cell('', align: TextAlign.start),
+            cell('LONG NOW', bold: true),
+            cell('LONG', bold: true),
+          ]),
+          row('Trades', (s) => '${s.trades}'),
+          row('Win rate', (s) => s.trades == 0 ? '—' : '${s.winRate.toStringAsFixed(0)}%'),
+          row('Net after fees', (s) => s.trades == 0 ? '—' : _usd(s.netUsd),
+              (s) => s.trades == 0 ? null : changeColor(s.netUsd)),
+          row('Average win', (s) => pct(s.avgWinPct, s.wins > 0), (_) => upColor),
+          row('Average loss', (s) => pct(s.avgLossPct, s.trades - s.wins > 0), (_) => downColor),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Text(verdict(), style: const TextStyle(color: Colors.white54, fontSize: 12)),
     ]);
   }
 }
@@ -362,6 +428,8 @@ class _SettingsCard extends StatelessWidget {
         value: s.autoStart,
         onChanged: (v) => bot.updateSettings((x) => x.autoStart = v),
       ),
+      pick<bool>('Enter on', s.enterOnLong, [false, true],
+          (v) => v ? 'LONG and above' : 'LONG NOW only', (v) => s.enterOnLong = v),
       pick<double>('Trade size', s.tradeSize, sizes, (v) => '\$${v.toStringAsFixed(0)}',
           (v) => s.tradeSize = v),
       pick<int>('Max open trades', s.maxOpen, [1, 2, 3, 5], (v) => '$v', (v) => s.maxOpen = v),
