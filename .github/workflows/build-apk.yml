@@ -27,6 +27,9 @@ jobs:
           cache: true
 
       - name: Generate Android + web project files
+        env:
+          MARKETHER_KEYSTORE: ${{ secrets.MARKETHER_KEYSTORE }}
+          MARKETHER_KEYSTORE_PASSWORD: ${{ secrets.MARKETHER_KEYSTORE_PASSWORD }}
         run: |
           flutter create --platforms=android,web --org com.marketai --project-name market_ai .
           rm -f test/widget_test.dart
@@ -51,19 +54,19 @@ jobs:
         run: flutter build apk --release
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk MarketAI-${{ github.run_number }}.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk MarkETHER-${{ github.run_number }}.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MarketAI-apk
-          path: MarketAI-${{ github.run_number }}.apk
+          name: MarkETHER-apk
+          path: MarkETHER-${{ github.run_number }}.apk
 
       - name: Publish APK as a release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Market AI build ${{ github.run_number }}
-          files: MarketAI-${{ github.run_number }}.apk
+          name: MarkETHER build ${{ github.run_number }}
+          files: MarkETHER-${{ github.run_number }}.apk
 
   deploy-web:
     needs: build
