@@ -1,6 +1,10 @@
 /// Core data types shared by the API layer, analyzers and UI.
 library;
 
+import 'patterns.dart';
+
+export 'patterns.dart' show ChartPattern;
+
 enum TradeMode { swing, scalp }
 
 extension TradeModeInfo on TradeMode {
@@ -185,6 +189,9 @@ class CoinAnalysis {
   /// Round-trip trading fees in percent (buy + sell).
   final double feePct;
 
+  /// Chart and candle patterns found right now (learned from by the bot).
+  final List<ChartPattern> patterns;
+
   const CoinAnalysis({
     required this.mode,
     required this.symbol,
@@ -199,6 +206,7 @@ class CoinAnalysis {
     required this.stop,
     required this.target,
     this.feePct = 0.2,
+    this.patterns = const [],
   });
 
   double get riskPct => entry > 0 ? (entry - stop) / entry * 100 : 0;

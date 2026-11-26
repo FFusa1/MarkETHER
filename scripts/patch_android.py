@@ -1,8 +1,11 @@
 """Run in CI after `flutter create`: sets the app name everywhere it shows
 and adds the Android internet permission."""
+import base64
 import json
+import os
 import pathlib
 import re
+import sys
 
 APP_NAME = "MarkETHER"
 
@@ -51,6 +54,56 @@ if "flutter_foreground_task.service.ForegroundService" not in xml:
 manifest.write_text(xml, encoding="utf-8")
 print("Android manifest patched")
 print(xml)
+
+# --- Release signing: the same key for every build ---
+# Without this, each cloud build signs with a brand-new random debug key, so
+# Android sees every APK as a different app (no update-in-place, and Play
+# Protect treats it as new each time). The key comes from two GitHub secrets.
+ks_b64 = os.environ.get("MARKETHER_KEYSTORE", "").strip()
+ks_pass = os.environ.get("MARKETHER_KEYSTORE_PASSWORD", "").strip()
+if ks_b64 and ks_pass:
+    if not re.fullmatch(r"[A-Za-z0-9]+", ks_pass):
+        sys.exit("MARKETHER_KEYSTORE_PASSWORD must be letters and digits only")
+    pathlib.Path("android/app/markether.p12").write_bytes(base64.b64decode(ks_b64))
+    kts = pathlib.Path("android/app/build.gradle.kts")
+    groovy = pathlib.Path("android/app/build.gradle")
+    if kts.exists():
+        g = kts.read_text(encoding="utf-8")
+        block = f"""    signingConfigs {{
+        create("markether") {{
+            storeFile = file("markether.p12")
+            storePassword = "{ks_pass}"
+            keyAlias = "markether"
+            keyPassword = "{ks_pass}"
+            storeType = "pkcs12"
+        }}
+    }}
+
+    buildTypes {{"""
+        old_ref, new_ref, target = 'signingConfigs.getByName("debug")', 'signingConfigs.getByName("markether")', kts
+    elif groovy.exists():
+        g = groovy.read_text(encoding="utf-8")
+        block = f"""    signingConfigs {{
+        markether {{
+            storeFile file("markether.p12")
+            storePassword "{ks_pass}"
+            keyAlias "markether"
+            keyPassword "{ks_pass}"
+            storeType "pkcs12"
+        }}
+    }}
+
+    buildTypes {{"""
+        old_ref, new_ref, target = "signingConfigs.debug", "signingConfigs.markether", groovy
+    else:
+        sys.exit("android/app/build.gradle(.kts) not found")
+    if "    buildTypes {" not in g or old_ref not in g:
+        sys.exit("Could not find where to add release signing in " + str(target))
+    g = g.replace("    buildTypes {", block, 1).replace(old_ref, new_ref)
+    target.write_text(g, encoding="utf-8")
+    print("Release signing: MarkETHER key")
+else:
+    print("WARNING: signing secrets not set, APK uses a random debug key")
 
 # --- Web (browser tab title, home-screen icon name) ---
 index = pathlib.Path("web/index.html")

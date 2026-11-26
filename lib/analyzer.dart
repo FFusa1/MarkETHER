@@ -10,6 +10,7 @@ import 'dart:math' as math;
 
 import 'indicators.dart';
 import 'models.dart';
+import 'patterns.dart';
 
 MarketRegime analyzeRegime(List<Candle> btcDaily) {
   final closes = btcDaily.map((c) => c.close).toList();
@@ -353,5 +354,6 @@ CoinAnalysis? analyzeCoin({
     entry: close,
     stop: stop,
     target: target,
+    patterns: detectPatterns(chart: h4, chartLabel: '4h', candles: daily, candleLabel: '1d'),
   );
 }

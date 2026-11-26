@@ -326,6 +326,20 @@ class _CoinTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
+                if (coin.patterns.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      coin.patterns.map((p) => '${p.bullish ? '▲' : '▼'} ${p.name}').join('  '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: coin.patterns.any((p) => p.bullish)
+                              ? const Color(0xFF80CBC4)
+                              : downColor),
+                    ),
+                  ),
               ]),
             ),
             const SizedBox(width: 8),

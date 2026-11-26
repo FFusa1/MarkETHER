@@ -144,6 +144,42 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
           ),
 
+          // Patterns
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Patterns', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                if (c.patterns.isEmpty)
+                  const Text('No chart or candle pattern right now.',
+                      style: TextStyle(color: Colors.white54, fontSize: 13)),
+                for (final p in c.patterns)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Icon(p.bullish ? Icons.trending_up : Icons.trending_down,
+                          size: 18, color: p.bullish ? upColor : downColor),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          Text(p.note,
+                              style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                        ]),
+                      ),
+                    ]),
+                  ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Patterns are not part of the score. The bot learns from its own trades '
+                  'which ones actually make money.',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ]),
+            ),
+          ),
+
           // Key indicators
           Card(
             child: Padding(

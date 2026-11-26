@@ -21,6 +21,7 @@ class BotScreen extends StatelessWidget {
             _OpenPositions(bot: bot),
             _StatsCard(bot: bot),
             _TierCard(bot: bot),
+            _PatternCard(bot: bot),
             _LearningCard(bot: bot),
             _SettingsCard(bot: bot),
             _Journal(bot: bot),
@@ -147,7 +148,8 @@ class _StatusCard extends StatelessWidget {
           Text(
             bot.running
                 ? 'Scans the top ${bot.settings.topN} coins every minute and buys '
-                    '${bot.settings.enterOnLong ? 'LONG and LONG NOW' : 'only LONG NOW'} signals. '
+                    '${bot.settings.enterOnLong ? 'LONG and LONG NOW' : 'only LONG NOW'} signals'
+                    '${bot.settings.patternTrades ? ', plus bullish chart patterns' : ''}. '
                     'Checks open trades every 15 seconds. On Android it keeps running in the '
                     'background (you will see a notification) until you press Stop or swipe the app '
                     'away. In a browser it runs while this tab is open.'
@@ -229,8 +231,11 @@ class _OpenPositions extends StatelessWidget {
             child: Row(children: [
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('${p.base}  ·  score ${p.score}',
+                  Text('${p.base}  ·  ${p.entry.isEmpty ? 'score' : p.entry} ${p.score}',
                       style: const TextStyle(fontWeight: FontWeight.w600)),
+                  if (p.patterns.isNotEmpty)
+                    Text(p.patterns.join(', '),
+                        style: const TextStyle(color: Color(0xFF80CBC4), fontSize: 12)),
                   Text(
                     'In ${fmtPrice(p.entryPrice)} · stop ${fmtPrice(p.stop)} · target ${fmtPrice(p.target)}\n'
                     '\$${p.size.toStringAsFixed(2)} · ${DateTime.now().difference(p.entryTime).inMinutes} min',
@@ -306,11 +311,11 @@ class _TierCard extends StatelessWidget {
                   fontSize: 13)),
         );
     String pct(double v, bool hasAny) => hasAny ? fmtPct(v) : '—';
+    final cols = [tiers.longNow, tiers.long, tiers.pattern];
     TableRow row(String label, String Function(BotStats) f, [Color? Function(BotStats)? c]) =>
         TableRow(children: [
           cell(label, align: TextAlign.start),
-          cell(f(tiers.longNow), color: c?.call(tiers.longNow)),
-          cell(f(tiers.long), color: c?.call(tiers.long)),
+          for (final s in cols) cell(f(s), color: c?.call(s)),
         ]);
     String verdict() {
       const need = 50;
@@ -321,20 +326,38 @@ class _TierCard extends StatelessWidget {
             'Use live only the level that ends with profit after fees.';
       }
       final aOk = a.netUsd > 0, bOk = b.netUsd > 0;
-      if (aOk && bOk) return 'Both levels are profitable on paper: "LONG and above" is OK for live.';
-      if (aOk) return 'Only LONG NOW is profitable: set "Enter on" to LONG NOW only before going live.';
-      if (bOk) return 'Only LONG is profitable so far, which is unusual: keep collecting paper data.';
-      return 'Neither level is profitable yet: do not go live, keep paper trading.';
+      final pat = tiers.pattern;
+      final patNote = pat.trades < need
+          ? ''
+          : (pat.netUsd > 0
+              ? ' Pattern buys are profitable too.'
+              : ' Pattern buys lose: turn off "Buy on chart patterns" before going live.');
+      if (aOk && bOk) {
+        return 'Both levels are profitable on paper: "LONG and above" is OK for live.$patNote';
+      }
+      if (aOk) {
+        return 'Only LONG NOW is profitable: set "Enter on" to LONG NOW only before going live.$patNote';
+      }
+      if (bOk) {
+        return 'Only LONG is profitable so far, which is unusual: keep collecting paper data.$patNote';
+      }
+      return 'Neither level is profitable yet: do not go live, keep paper trading.$patNote';
     }
 
-    return _Section(title: 'LONG NOW vs LONG', children: [
+    return _Section(title: 'Results by entry signal', children: [
       Table(
-        columnWidths: const {0: FlexColumnWidth(1.4), 1: FlexColumnWidth(), 2: FlexColumnWidth()},
+        columnWidths: const {
+          0: FlexColumnWidth(1.25),
+          1: FlexColumnWidth(),
+          2: FlexColumnWidth(),
+          3: FlexColumnWidth()
+        },
         children: [
           TableRow(children: [
             cell('', align: TextAlign.start),
             cell('LONG NOW', bold: true),
             cell('LONG', bold: true),
+            cell('Pattern', bold: true),
           ]),
           row('Trades', (s) => '${s.trades}'),
           row('Win rate', (s) => s.trades == 0 ? '—' : '${s.winRate.toStringAsFixed(0)}%'),
@@ -346,6 +369,67 @@ class _TierCard extends StatelessWidget {
       ),
       const SizedBox(height: 8),
       Text(verdict(), style: const TextStyle(color: Colors.white54, fontSize: 12)),
+      const SizedBox(height: 4),
+      const Text('Pattern = bought only because of a bullish chart pattern.',
+          style: TextStyle(color: Colors.white38, fontSize: 11)),
+    ]);
+  }
+}
+
+class _PatternCard extends StatelessWidget {
+  final PaperBot bot;
+  const _PatternCard({required this.bot});
+
+  @override
+  Widget build(BuildContext context) {
+    final list = patternStatsOf(bot.trades);
+    final losing = losingPatterns(bot.trades);
+    final untagged = bot.trades.where((t) => t.patterns.isEmpty).length;
+    return _Section(title: 'Patterns it has traded', children: [
+      const Text(
+        'Every buy records the chart and candle patterns present at that moment (cup and handle, '
+        'double bottom, bull flag, hammer, ...). Each pattern needs $patternMinTrades trades before '
+        'its result counts.',
+        style: TextStyle(color: Colors.white54, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      if (list.isEmpty)
+        const Text('No pattern trades yet.', style: TextStyle(color: Colors.white70)),
+      for (final p in list)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: [
+            Icon(
+              p.stats.trades < patternMinTrades
+                  ? Icons.hourglass_empty
+                  : (p.stats.netUsd > 0 ? Icons.trending_up : Icons.trending_down),
+              size: 16,
+              color: p.stats.trades < patternMinTrades
+                  ? Colors.white38
+                  : (p.stats.netUsd > 0 ? upColor : downColor),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(p.name, style: const TextStyle(fontSize: 13)),
+                Text(
+                  '${p.stats.trades} trades · ${p.stats.winRate.toStringAsFixed(0)}% wins'
+                  '${p.stats.trades < patternMinTrades ? ' · still learning' : ''}'
+                  '${losing.contains(p.name) ? (bot.settings.skipLosingPatterns ? ' · losing, skipped' : ' · losing') : ''}',
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ]),
+            ),
+            Text('avg ${fmtPct(p.stats.avgPct)}',
+                style: TextStyle(fontSize: 12, color: changeColor(p.stats.avgPct))),
+          ]),
+        ),
+      if (untagged > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text('$untagged trades had no pattern (or were made before patterns were recorded).',
+              style: const TextStyle(color: Colors.white38, fontSize: 11)),
+        ),
     ]);
   }
 }
@@ -430,6 +514,22 @@ class _SettingsCard extends StatelessWidget {
       ),
       pick<bool>('Enter on', s.enterOnLong, [false, true],
           (v) => v ? 'LONG and above' : 'LONG NOW only', (v) => s.enterOnLong = v),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Buy on chart patterns'),
+        subtitle: const Text('Also buys a bullish chart pattern when the score is 50+',
+            style: TextStyle(fontSize: 12)),
+        value: s.patternTrades,
+        onChanged: (v) => bot.updateSettings((x) => x.patternTrades = v),
+      ),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Skip losing patterns'),
+        subtitle: const Text('Avoids patterns that lost money over $patternMinTrades+ trades',
+            style: TextStyle(fontSize: 12)),
+        value: s.skipLosingPatterns,
+        onChanged: (v) => bot.updateSettings((x) => x.skipLosingPatterns = v),
+      ),
       pick<double>('Trade size', s.tradeSize, sizes, (v) => '\$${v.toStringAsFixed(0)}',
           (v) => s.tradeSize = v),
       pick<int>('Max open trades', s.maxOpen, [1, 2, 3, 5], (v) => '$v', (v) => s.maxOpen = v),
@@ -463,9 +563,13 @@ class _Journal extends StatelessWidget {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('${t.base} · ${t.reason}', style: const TextStyle(fontSize: 13)),
                 Text(
-                  '${_hm(t.entryTime)} → ${_hm(t.exitTime)} · ${t.duration.inMinutes} min · score ${t.score}',
+                  '${_hm(t.entryTime)} → ${_hm(t.exitTime)} · ${t.duration.inMinutes} min · '
+                  '${t.tier} ${t.score}',
                   style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
+                if (t.patterns.isNotEmpty)
+                  Text(t.patterns.join(', '),
+                      style: const TextStyle(color: Color(0xFF80CBC4), fontSize: 11)),
               ]),
             ),
             Column(crossAxisAlignment: CrossAxisAlignment.end, children: [

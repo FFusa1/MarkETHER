@@ -12,6 +12,7 @@ import 'dart:math' as math;
 
 import 'indicators.dart';
 import 'models.dart';
+import 'patterns.dart';
 
 /// Binance spot taker fee (0.1%) paid on both the buy and the sell.
 const scalpFeePct = 0.2;
@@ -272,5 +273,6 @@ CoinAnalysis? analyzeScalp({
     stop: stop,
     target: target,
     feePct: scalpFeePct,
+    patterns: detectPatterns(chart: m15, chartLabel: '15m', candles: m5, candleLabel: '5m'),
   );
 }

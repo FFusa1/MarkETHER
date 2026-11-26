@@ -30,8 +30,17 @@ class BotSettings {
   /// true = also enter on LONG (score 56–69), not only LONG NOW (70+).
   bool enterOnLong;
 
+  /// Also buy when a bullish chart pattern shows up and the score is 50+,
+  /// so the bot can learn whether the pattern works on its own.
+  bool patternTrades;
+
+  /// Skip coins showing a pattern that lost money over 20+ trades.
+  bool skipLosingPatterns;
+
   BotSettings({
     this.enterOnLong = true,
+    this.patternTrades = true,
+    this.skipLosingPatterns = true,
     this.tradeSize = 10,
     this.maxOpen = 3,
     this.dailyLossLimit = 5,
@@ -50,6 +59,8 @@ class BotSettings {
         'topN': topN,
         'autoStart': autoStart,
         'enterOnLong': enterOnLong,
+        'patternTrades': patternTrades,
+        'skipLosingPatterns': skipLosingPatterns,
       };
 
   factory BotSettings.fromJson(Map<String, dynamic> j) => BotSettings(
@@ -61,6 +72,8 @@ class BotSettings {
         topN: (j['topN'] as num?)?.toInt() ?? 50,
         autoStart: j['autoStart'] as bool? ?? false,
         enterOnLong: j['enterOnLong'] as bool? ?? true,
+        patternTrades: j['patternTrades'] as bool? ?? true,
+        skipLosingPatterns: j['skipLosingPatterns'] as bool? ?? true,
       );
 }
 
@@ -76,6 +89,12 @@ class Position {
 
   /// Strength 0–100 of each score category at entry (for learning).
   final Map<String, int> features;
+
+  /// Patterns seen at entry, e.g. "Cup and handle (15m)".
+  final List<String> patterns;
+
+  /// Why it was bought: 'LONG NOW', 'LONG' or 'Pattern'.
+  final String entry;
   DateTime lastChecked;
   double? lastBid;
 
@@ -89,6 +108,8 @@ class Position {
     required this.target,
     required this.score,
     required this.features,
+    this.patterns = const [],
+    this.entry = '',
     required this.lastChecked,
     this.lastBid,
   });
@@ -108,6 +129,8 @@ class Position {
         'target': target,
         'score': score,
         'features': features,
+        'patterns': patterns,
+        'entry': entry,
         'lastChecked': lastChecked.millisecondsSinceEpoch,
         'lastBid': lastBid,
       };
@@ -123,6 +146,8 @@ class Position {
         score: (j['score'] as num).toInt(),
         features: (j['features'] as Map<String, dynamic>)
             .map((k, v) => MapEntry(k, (v as num).toInt())),
+        patterns: _strings(j['patterns']),
+        entry: j['entry'] as String? ?? '',
         lastChecked: DateTime.fromMillisecondsSinceEpoch((j['lastChecked'] as num).toInt()),
         lastBid: (j['lastBid'] as num?)?.toDouble(),
       );
@@ -139,6 +164,10 @@ class Trade {
   final String reason;
   final int score;
   final Map<String, int> features;
+  final List<String> patterns;
+
+  /// Why it was bought: 'LONG NOW', 'LONG' or 'Pattern' ('' = older trade).
+  final String entry;
 
   const Trade({
     required this.symbol,
@@ -151,6 +180,8 @@ class Trade {
     required this.reason,
     required this.score,
     required this.features,
+    this.patterns = const [],
+    this.entry = '',
   });
 
   double get netPct => (exitPrice / entryPrice - 1) * 100 - 2 * feePerSidePct;
@@ -169,6 +200,8 @@ class Trade {
         'reason': reason,
         'score': score,
         'features': features,
+        'patterns': patterns,
+        'entry': entry,
       };
 
   factory Trade.fromJson(Map<String, dynamic> j) => Trade(
@@ -183,8 +216,18 @@ class Trade {
         score: (j['score'] as num).toInt(),
         features: (j['features'] as Map<String, dynamic>)
             .map((k, v) => MapEntry(k, (v as num).toInt())),
+        patterns: _strings(j['patterns']),
+        entry: j['entry'] as String? ?? '',
       );
+
+  /// Entry level, also for trades saved before it was recorded.
+  String get tier => entry.isNotEmpty
+      ? entry
+      : (score >= longNowMinScore ? 'LONG NOW' : (score >= longMinScore ? 'LONG' : 'Pattern'));
 }
+
+List<String> _strings(dynamic v) =>
+    v is List ? v.map((e) => e.toString()).toList() : const [];
 
 // ---------------------------------------------------------------------------
 // Pure trading rules (unit-tested)
@@ -215,13 +258,62 @@ bool shouldEnter(Rating r, bool enterOnLong) =>
 
 /// Score of 70+ is LONG NOW; 56–69 is LONG (scores and labels always agree).
 const longNowMinScore = 70;
-bool isLongNowTrade(Trade t) => t.score >= longNowMinScore;
+
+/// LONG starts at 56.
+const longMinScore = 56;
+
+/// Pattern-only buys need at least this score (WAIT, not AVOID).
+const patternMinScore = 50;
 
 /// Results split by entry signal, to decide which level to use live.
-({BotStats longNow, BotStats long}) statsByTier(List<Trade> trades) => (
-      longNow: BotStats.of(trades.where(isLongNowTrade).toList()),
-      long: BotStats.of(trades.where((t) => !isLongNowTrade(t)).toList()),
+({BotStats longNow, BotStats long, BotStats pattern}) statsByTier(List<Trade> trades) => (
+      longNow: BotStats.of(trades.where((t) => t.tier == 'LONG NOW').toList()),
+      long: BotStats.of(trades.where((t) => t.tier == 'LONG').toList()),
+      pattern: BotStats.of(trades.where((t) => t.tier == 'Pattern').toList()),
     );
+
+/// A pattern needs this many trades before its result counts.
+const patternMinTrades = 20;
+
+/// Results for each pattern seen at entry, best average first.
+List<({String name, BotStats stats})> patternStatsOf(List<Trade> trades) {
+  final names = <String>{for (final t in trades) ...t.patterns};
+  final out = [
+    for (final n in names)
+      (name: n, stats: BotStats.of(trades.where((t) => t.patterns.contains(n)).toList())),
+  ];
+  out.sort((a, b) => b.stats.avgPct.compareTo(a.stats.avgPct));
+  return out;
+}
+
+/// Patterns that lost money after fees over at least [patternMinTrades] trades.
+Set<String> losingPatterns(List<Trade> trades) => {
+      for (final p in patternStatsOf(trades))
+        if (p.stats.trades >= patternMinTrades && p.stats.netUsd < 0) p.name,
+    };
+
+/// Why the bot buys a coin ('LONG NOW', 'LONG', 'Pattern'), or null to skip.
+String? entryReason({
+  required Rating rating,
+  required int score,
+  required double netRiskReward,
+  required List<ChartPattern> patterns,
+  required BotSettings settings,
+  Set<String> losing = const {},
+}) {
+  if (settings.skipLosingPatterns && patterns.any((p) => losing.contains(p.name))) return null;
+  if (shouldEnter(rating, settings.enterOnLong)) {
+    return rating == Rating.strongBuy ? 'LONG NOW' : 'LONG';
+  }
+  if (settings.patternTrades &&
+      score >= patternMinScore &&
+      netRiskReward >= 1 &&
+      patterns.any((p) => p.bullish && !p.candle) &&
+      !patterns.any((p) => !p.bullish)) {
+    return 'Pattern';
+  }
+  return null;
+}
 
 /// Exit decision for a live price check, or null to keep holding.
 /// Stops fill at the current bid (market sell); targets fill at the target
@@ -262,6 +354,10 @@ class BotStats {
       this.profitFactor, this.worstLosingStreak);
 
   double get winRate => trades == 0 ? 0 : wins / trades * 100;
+
+  /// Average result per trade in %, after fees.
+  double get avgPct =>
+      trades == 0 ? 0 : (avgWinPct * wins + avgLossPct * (trades - wins)) / trades;
 
   factory BotStats.of(List<Trade> trades) {
     if (trades.isEmpty) return const BotStats(0, 0, 0, 0, 0, 0, 0);
@@ -583,10 +679,19 @@ class PaperBot extends ChangeNotifier {
 
   void _enter(ScanResult r) {
     final now = DateTime.now();
+    final losing = losingPatterns(trades);
     for (final c in r.coins) {
       if (open.length >= settings.maxOpen) break;
       if (state != BotState.running) break;
-      if (!shouldEnter(c.rating, settings.enterOnLong)) continue;
+      final why = entryReason(
+        rating: c.rating,
+        score: c.score,
+        netRiskReward: c.netRiskReward,
+        patterns: c.patterns,
+        settings: settings,
+        losing: losing,
+      );
+      if (why == null) continue;
       if (open.any((p) => p.symbol == c.symbol)) continue;
       final cd = _cooldown[c.symbol];
       if (cd != null && now.isBefore(cd)) continue;
@@ -601,11 +706,13 @@ class PaperBot extends ChangeNotifier {
         target: c.target,
         score: c.score,
         features: featuresOf(c),
+        patterns: c.patterns.map((p) => p.name).toList(),
+        entry: why,
         lastChecked: now,
         lastBid: c.entry,
       ));
-      lastEvent = 'Bought ${c.base} at ${c.entry} '
-          '(${c.rating == Rating.strongBuy ? 'LONG NOW' : 'LONG'}, score ${c.score})';
+      final pats = c.patterns.isEmpty ? '' : ' · ${c.patterns.map((p) => p.name).join(', ')}';
+      lastEvent = 'Bought ${c.base} at ${c.entry} ($why, score ${c.score})$pats';
     }
   }
 
@@ -622,6 +729,8 @@ class PaperBot extends ChangeNotifier {
       reason: reason,
       score: p.score,
       features: p.features,
+      patterns: p.patterns,
+      entry: p.entry,
     );
     trades.insert(0, t);
     _cooldown[p.symbol] = time.add(Duration(minutes: settings.cooldownMin));
