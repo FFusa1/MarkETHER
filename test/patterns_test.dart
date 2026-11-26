@@ -62,7 +62,7 @@ void main() {
     });
 
     test('finds a bull flag', () {
-      final p = [
+      final p = <double>[
         for (var i = 0; i < 20; i++) 100 + (i.isOdd ? 0.2 : 0.0),
         ...line(100, 106, 6), // the pole
         105.5, 105, 104.6, 104.3, 104.5, 104.8, 105.2, 105.6, // the flag
